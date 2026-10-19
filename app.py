@@ -29,6 +29,11 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 
 # Every webhook that passes HMAC lands here so you can see it at /api/webhooks/received.
 RECEIVED: list[dict] = []
+# Adyen retries a notification until it gets a 200, and can deliver the same one more than
+# once. (pspReference, eventCode) identifies an event; a second delivery is acknowledged but
+# not recorded again. In a real app this set lives in your database, not in memory.
+SEEN: set[tuple[str, str]] = set()
+DUPLICATES: list[dict] = []
 
 
 @app.get("/")
@@ -109,6 +114,13 @@ def notifications():
         if not webhook.is_valid(item, key):
             log.warning("HMAC failed for pspReference=%s; dropped", item.get("pspReference"))
             continue
+        event_key = (str(item.get("pspReference")), str(item.get("eventCode")))
+        if event_key in SEEN:
+            DUPLICATES.append({"receivedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                               "pspReference": event_key[0], "eventCode": event_key[1]})
+            log.info("duplicate delivery pspReference=%s eventCode=%s; acknowledged, not recorded", *event_key)
+            continue
+        SEEN.add(event_key)
         accepted += 1
         record = {
             "receivedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -129,7 +141,7 @@ def notifications():
 @app.get("/api/webhooks/received")
 def received():
     """What this server has accepted so far (in-memory; resets on restart)."""
-    return jsonify(RECEIVED)
+    return jsonify({"accepted": RECEIVED, "duplicatesAcknowledged": DUPLICATES})
 
 
 @app.get("/healthz")

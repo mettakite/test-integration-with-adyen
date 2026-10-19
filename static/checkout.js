@@ -3,7 +3,9 @@
 // 2. AdyenCheckout({ session }) then new Dropin(checkout).mount()
 // 3. Drop-in talks to Adyen directly for the payment; callbacks report the outcome.
 
-const { AdyenCheckout, Dropin, Card, Ideal } = window.AdyenWeb;
+const AW = window.AdyenWeb || {};
+const { AdyenCheckout, Dropin, Card } = AW;
+const Ideal = AW.Ideal; // optional; v6 exports it, but guard anyway
 
 const sessionLog = document.getElementById("session-log");
 const resultLog = document.getElementById("result-log");
@@ -13,11 +15,15 @@ function show(el, obj) {
   el.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 }
 
+if (!AdyenCheckout || !Dropin || !Card) {
+  show(resultLog, { event: "sdk not loaded", haveAdyenWeb: !!window.AdyenWeb, keys: Object.keys(AW).slice(0, 20) });
+}
+
 document.getElementById("session-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (dropin) { dropin.unmount(); dropin = null; }
   show(sessionLog, "Creating session...");
-  show(resultLog, "No payment yet.");
+  show(resultLog, "Session created; initializing Drop-in...");
 
   const body = {
     amount: Number(document.getElementById("amount").value),
@@ -38,27 +44,48 @@ document.getElementById("session-form").addEventListener("submit", async (ev) =>
   }
   show(sessionLog, { reference: session.reference, id: session.id, sessionData: session.sessionData.slice(0, 32) + "..." });
 
-  const checkout = await AdyenCheckout({
-    environment: window.ADYEN_CONFIG.environment,
-    clientKey: window.ADYEN_CONFIG.clientKey,
-    session: { id: session.id, sessionData: session.sessionData },
-    countryCode: body.countryCode,
-    amount: { value: body.amount, currency: body.currency },
-    locale: "en-US",
-    onPaymentCompleted(result, component) {
-      // result.resultCode: Authorised | Pending | Received | Refused ...
-      show(resultLog, { event: "onPaymentCompleted", resultCode: result.resultCode, sessionResult: result.sessionResult });
-    },
-    onPaymentFailed(result, component) {
-      show(resultLog, { event: "onPaymentFailed", resultCode: result.resultCode });
-    },
-    onError(error, component) {
-      show(resultLog, { event: "onError", name: error.name, message: error.message });
-    },
-  });
+  let checkout;
+  try {
+    checkout = await AdyenCheckout({
+      environment: window.ADYEN_CONFIG.environment,
+      clientKey: window.ADYEN_CONFIG.clientKey,
+      session: { id: session.id, sessionData: session.sessionData },
+      countryCode: body.countryCode,
+      amount: { value: body.amount, currency: body.currency },
+      locale: "en-US",
+      onPaymentCompleted(result, component) {
+        // result.resultCode: Authorised | Pending | Received | Refused ...
+        show(resultLog, { event: "onPaymentCompleted", resultCode: result.resultCode, sessionResult: result.sessionResult });
+      },
+      onPaymentFailed(result, component) {
+        show(resultLog, { event: "onPaymentFailed", resultCode: result.resultCode });
+      },
+      onError(error, component) {
+        show(resultLog, { event: "onError", name: error.name, message: error.message });
+      },
+      onChange(state, component) {
+        // Fires as the shopper types. isValid flips true when the card form is complete.
+        show(resultLog, { event: "onChange", isValid: state.isValid, paymentMethod: state.data?.paymentMethod?.type });
+      },
+      onAdditionalDetails(state, component) {
+        show(resultLog, { event: "onAdditionalDetails (3DS/redirect step)", data: Object.keys(state.data || {}) });
+      },
+    });
+  } catch (err) {
+    show(resultLog, { event: "AdyenCheckout failed", name: err.name, message: err.message });
+    console.error(err);
+    return;
+  }
 
-  dropin = new Dropin(checkout, {
-    paymentMethodComponents: [Card, Ideal],
-    showPayButton: true,
-  }).mount("#dropin-container");
+  try {
+    const components = [Card, Ideal].filter(Boolean);
+    dropin = new Dropin(checkout, {
+      paymentMethodComponents: components,
+      showPayButton: true,
+    }).mount("#dropin-container");
+    show(resultLog, { event: "dropin mounted", components: components.map((c) => c.type || c.name), paymentMethods: (checkout.paymentMethodsResponse?.paymentMethods || []).map((m) => m.type) });
+  } catch (err) {
+    show(resultLog, { event: "dropin mount failed", message: err.message });
+    console.error(err);
+  }
 });

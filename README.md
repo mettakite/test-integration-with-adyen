@@ -4,6 +4,10 @@ A minimal, end-to-end Adyen Checkout integration you can clone and run in ten mi
 Flask on the server, Adyen's Drop-in v6 in the browser, the Sessions flow in between,
 and an HMAC-verified webhook receiver so the result is confirmed by Adyen, not by the browser.
 
+![First live test-card payment: resultCode Authorised](docs/authorised.png)
+
+*First run against a live Adyen test account, 2026-10-19: session created server-side, Drop-in rendered from the CDN, test card authorised.*
+
 Built as a developer-experience exercise: every step a first-time integrator hits is in
 [FRICTION_LOG.md](FRICTION_LOG.md). The code is deliberately plain `requests` + stdlib `hmac`
 so the request and response shapes stay visible.
